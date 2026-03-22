@@ -9,6 +9,10 @@ on:
   schedule:
     # UTC 09:10 = 台北 17:10（週一到週五）
     - cron: "10 9 * * 1-5"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -133,5 +137,6 @@ jobs:
             echo "nothing to commit"
           else
             git commit -m "Daily update: ${REPORT_DATE}"
+            git pull --rebase origin master
             git push
           fi

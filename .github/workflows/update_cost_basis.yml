@@ -2,7 +2,7 @@ name: Update Cost Basis
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     paths:
       - "reports/change_table*.csv"  # 只要 reports/ 下 change_table 檔案有變動就觸發
   workflow_dispatch: {}              # 允許手動觸發
@@ -69,6 +69,8 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
             git commit -m "chore(cost): update cost basis from change_table"
+            git pull --rebase origin master
             git push
           else
             echo "No changes to commit."
+          fi
