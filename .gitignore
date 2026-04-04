@@ -1,0 +1,30 @@
+# Data and Artifacts
+prices/
+reports/
+archive/
+data_snapshots/
+downloads/
+manifest/
+ledger/
+data/
+repo_tmp/
+charts/
+screenshots/
+
+# Secrets and Credentials
+.env
+*.env
+
+# Python Environment and Cache
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Editor Config
+.vscode/
+
+# Logs
+*.log
+shioaji.log

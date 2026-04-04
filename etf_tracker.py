@@ -27,7 +27,7 @@ for d in (DOWNLOAD_DIR, DATA_DIR, SNAP_DATA_DIR, SCREEN_DIR, PRICE_DIR, MANIFEST
 
 # === 網址 ===
 FUND_CODE = os.environ.get("FUND_CODE", "500")  # 00992A
-ETF_URL   = os.environ.get("EZMONEY_URL", f"https://www.ezmoney.com.tw/ETF/Fund/Info?fundCode={FUND_CODE}")
+ETF_URL   = os.environ.get("CAPITALFUND_URL", f"https://www.capitalfund.com.tw/etf/product/detail/{FUND_CODE}/basic")
 
 # === 欄位別名（放寬） ===
 ALIASES = {
