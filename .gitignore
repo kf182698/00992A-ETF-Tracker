@@ -1,15 +1,15 @@
-# Data and Artifacts
-prices/
-reports/
-archive/
-data_snapshots/
-downloads/
-manifest/
-ledger/
-data/
-repo_tmp/
-charts/
-screenshots/
+# Data and Artifacts (Removed exclusions to allow Actions to commit updates)
+# prices/
+# reports/
+# archive/
+# data_snapshots/
+# downloads/
+# manifest/
+# ledger/
+# data/
+# repo_tmp/
+# charts/
+# screenshots/
 
 # Secrets and Credentials
 .env
