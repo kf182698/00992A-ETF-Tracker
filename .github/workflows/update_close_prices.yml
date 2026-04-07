@@ -1,84 +1,100 @@
-name: Update Close Prices (TWSE/TPEx, after data push)
+name: Repair Prices And Reports
 
 on:
-  push:
-    branches: [ master ]
-    paths:
-      - "data/**/*.csv"          # 只要 data/ 底下有 CSV 變動就觸發
-  workflow_dispatch: {}          # 可手動執行
+  workflow_dispatch:
+    inputs:
+      through_date:
+        description: "重補到此日期，格式 YYYY-MM-DD 或 YYYYMMDD"
+        required: false
+        default: ""
 
-concurrency:
-  group: update-close-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  TZ: Asia/Taipei
+permissions:
+  contents: write
+  issues: write
 
 jobs:
-  update-close:
+  repair:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    env:
+      TZ: Asia/Taipei
+      SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
+      SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
+      SHIOAJI_SIMULATION: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt
 
-      - name: Resolve changed CSV list
-        id: files
+      - name: Determine through date
         shell: bash
         run: |
-          # 取得本次 push 變動的 data/ CSV 清單（新增或修改）
-          BASE_SHA="${{ github.event.before }}"
-          HEAD_SHA="${{ github.sha }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            # fork/第一個 commit 等情況：全庫掃描 data/**/*.csv
-            mapfile -t changed < <(git ls-files 'data/**/*.csv')
+          RAW="${{ github.event.inputs.through_date }}"
+          if [ -z "$RAW" ]; then
+            THROUGH_DATE="$(date +'%Y-%m-%d')"
+          elif [[ "$RAW" =~ ^[0-9]{8}$ ]]; then
+            THROUGH_DATE="${RAW:0:4}-${RAW:4:2}-${RAW:6:2}"
           else
-            mapfile -t changed < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- 'data/**/*.csv')
+            THROUGH_DATE="$(date -d "$RAW" +'%Y-%m-%d')"
           fi
+          echo "THROUGH_DATE=$THROUGH_DATE" >> "$GITHUB_ENV"
+          echo "[workflow] THROUGH_DATE=$THROUGH_DATE"
 
-          if [ ${#changed[@]} -eq 0 ]; then
-            echo "no_changed=true" >> $GITHUB_OUTPUT
-            echo "No changed CSV under data/"
-            exit 0
-          fi
-
-          printf '%s\n' "${changed[@]}" > /tmp/changed_csv.txt
-          echo "changed_count=${#changed[@]}" >> $GITHUB_OUTPUT
-
-          # 👉 A 的 echo：把檔案清單印到 log，方便你在 Actions 看到
-          echo "Changed files:"
-          cat /tmp/changed_csv.txt
-
-      - name: Add close prices to changed CSVs
-        if: steps.files.outputs.no_changed != 'true'
+      - name: Repair prices via Shioaji
         run: |
-          python scripts/add_close_prices_tw.py \
-            --csv-list-file /tmp/changed_csv.txt \
-            --max-backdays 15 \
-            --overwrite-same-day
+          python scripts/fill_prices_with_shioaji.py \
+            --through-date "$THROUGH_DATE" \
+            --write-with-price
 
-      - name: Commit & Push if changed
+      - name: Rebuild reports and cost basis
         run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "chore(data): add 收盤價 to changed CSVs (TWSE/TPEx)"
+          python scripts/build_change_tables.py \
+            --through-date "$THROUGH_DATE" \
+            --require-price
+          python scripts/rebuild_cost_basis.py --reset
+
+      - name: Commit repaired outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/ prices/ reports/ manifest/
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "Repair prices & reports through ${THROUGH_DATE}"
             git pull --rebase origin master
             git push
-          else
-            echo "No changes to commit."
           fi
+
+      - name: Notify failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+        run: |
+          BODY=$(cat <<EOF
+          workflow: Repair Prices And Reports
+          job: repair
+          through_date: ${THROUGH_DATE:-N/A}
+          ref: ${{ github.ref_name }}
+          run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          python scripts/notify_failure.py \
+            --subject "[00992A] Repair prices or reports failed" \
+            --body "$BODY"

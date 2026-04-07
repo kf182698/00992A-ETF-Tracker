@@ -46,15 +46,13 @@ def _load_df(path: Path) -> pd.DataFrame:
     df = df[["股票代號","股票名稱","股數","持股權重"]].drop_duplicates("股票代號")
     return df.sort_values("股票代號").reset_index(drop=True)
 
-def _find_prev_snapshot(report_date: str) -> Path:
+def _find_prev_snapshot(report_date: str) -> Path | None:
     snaps = sorted(glob.glob("data_snapshots/*.csv"))
     prev_path = None
     for p in reversed(snaps):
         name = Path(p).stem  # YYYY-MM-DD
         if name < report_date:
             prev_path = Path(p); break
-    if prev_path is None:
-        raise RuntimeError(f"找不到 {report_date} 之前的可用 CSV 作為比較基期（於 data_snapshots）")
     return prev_path
 
 def _load_prices(report_date: str) -> pd.DataFrame:
@@ -129,10 +127,14 @@ def main():
         raise FileNotFoundError(f"找不到今日 CSV：{today_csv}")
     
     prev_csv = _find_prev_snapshot(report_date)
-    prev_date = prev_csv.stem  # 取得昨日日期 YYYY-MM-DD
-    
+    prev_date = prev_csv.stem if prev_csv else "N/A"
+
     df_t = _load_df(today_csv).rename(columns={"股數":"今日股數","持股權重":"今日權重%"})
-    df_y = _load_df(prev_csv).rename(columns={"股數":"昨日股數","持股權重":"昨日權重%"})
+    if prev_csv is None:
+        # 初始化首日變化表，將前一日視為空部位。
+        df_y = pd.DataFrame(columns=["股票代號", "股票名稱", "昨日股數", "昨日權重%"])
+    else:
+        df_y = _load_df(prev_csv).rename(columns={"股數":"昨日股數","持股權重":"昨日權重%"})
     
     df = pd.merge(df_t, df_y, on=["股票代號"], how="outer")
     df["股票名稱"] = df["股票名稱_x"].fillna(df["股票名稱_y"]).fillna("")

@@ -11,15 +11,17 @@ plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei", "PingFang TC", "Noto Sa
 plt.rcParams["axes.unicode_minus"] = False
 
 def get_report_date() -> str:
+    d = (os.getenv("REPORT_DATE") or "").strip()
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    if d:
+        return d
     p = Path("manifest/effective_date.txt")
     if p.exists():
         d = p.read_text(encoding="utf-8").strip()
         if d:
             return d
-    d = (os.getenv("REPORT_DATE") or "").strip()
-    if len(d) == 8 and d.isdigit():
-        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
-    return d
+    return ""
 
 def find_prev_snapshot(report_date: str) -> str:
     snaps = sorted(glob.glob("data_snapshots/*.csv"))

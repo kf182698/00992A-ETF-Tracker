@@ -20,16 +20,18 @@ import pandas as pd
 
 # -------------------- 共用：日期/檔案 --------------------
 def get_report_date() -> str:
-    """優先讀 manifest/effective_date.txt，其次讀環境變數 REPORT_DATE。"""
+    """優先讀環境變數 REPORT_DATE，其次讀 manifest/effective_date.txt。"""
+    d = (os.getenv("REPORT_DATE") or "").strip()
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    if d:
+        return d
     m = Path("manifest/effective_date.txt")
     if m.exists():
         d = m.read_text(encoding="utf-8").strip()
         if d:
             return d
-    d = (os.getenv("REPORT_DATE") or "").strip()
-    if len(d) == 8 and d.isdigit():
-        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
-    return d
+    return ""
 
 
 def find_prev_snapshot(report_date: str) -> str:

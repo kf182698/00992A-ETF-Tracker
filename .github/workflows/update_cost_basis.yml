@@ -1,25 +1,25 @@
-name: Update Cost Basis
+name: Rebuild Cost Basis
 
 on:
-  push:
-    branches: [ master ]
-    paths:
-      - "reports/change_table*.csv"  # 只要 reports/ 下 change_table 檔案有變動就觸發
-  workflow_dispatch: {}              # 允許手動觸發
+  workflow_dispatch:
 
-env:
-  TZ: Asia/Taipei
+permissions:
+  contents: write
+  issues: write
 
 jobs:
-  update-cost-basis:
+  rebuild-cost-basis:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Taipei
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -29,48 +29,39 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
 
-      - name: Resolve changed change_table CSV list
-        id: changed
-        shell: bash
+      - name: Rebuild cost basis from reports
+        run: python scripts/rebuild_cost_basis.py --reset
+
+      - name: Commit rebuilt cost basis
         run: |
-          # 找出這次 commit 變動的 change_table 檔案（新增或修改）
-          BASE_SHA="${{ github.event.before }}"
-          HEAD_SHA="${{ github.sha }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            mapfile -t changed_files < <(git ls-files 'reports/change_table*.csv')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cost_basis.csv data/realized_gains_log.csv
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
           else
-            mapfile -t changed_files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- 'reports/change_table*.csv')
-          fi
-          if [ ${#changed_files[@]} -eq 0 ]; then
-            echo "no_changed=true" >> $GITHUB_OUTPUT
-            echo "No change_table CSVs changed."
-            exit 0
-          fi
-          printf '%s\n' "${changed_files[@]}" > /tmp/changed_table.txt
-          echo "changed_count=${#changed_files[@]}" >> $GITHUB_OUTPUT
-          echo "Changed files:"
-          cat /tmp/changed_table.txt
-
-      - name: Update cost basis
-        if: steps.changed.outputs.no_changed != 'true'
-        run: |
-          # 對於每一個變動的 change_table CSV 都更新成本市值
-          while IFS= read -r table_path; do
-            python scripts/update_cost_basis.py \
-              --change-table-path "$table_path" \
-              --cost-basis-path data/cost_basis.csv \
-              --output-path data/cost_basis.csv
-          done < /tmp/changed_table.txt
-
-      - name: Commit & Push if changed
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "chore(cost): update cost basis from change_table"
+            git commit -m "Rebuild cost basis"
             git pull --rebase origin master
             git push
-          else
-            echo "No changes to commit."
           fi
+
+      - name: Notify failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+        run: |
+          BODY=$(cat <<EOF
+          workflow: Rebuild Cost Basis
+          job: rebuild-cost-basis
+          ref: ${{ github.ref_name }}
+          run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          python scripts/notify_failure.py \
+            --subject "[00992A] Rebuild cost basis failed" \
+            --body "$BODY"

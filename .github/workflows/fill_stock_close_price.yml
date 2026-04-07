@@ -1,41 +1,120 @@
-name: Auto Fill Stocks Close Price
+name: Backfill Holdings And Prices
 
 on:
-  schedule:
-    - cron: '15 12 * * *'  # UTC 時區，台灣晚上 8:15 執行 (UTC+8 → UTC 12:15)
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "回補起始日，留空則自動探測"
+        required: false
+        default: ""
+      end_date:
+        description: "回補結束日，格式 YYYY-MM-DD 或 YYYYMMDD"
+        required: false
+        default: ""
 
-  workflow_dispatch:   # 可手動觸發
+permissions:
+  contents: write
+  issues: write
 
 jobs:
-  run-script:
+  backfill:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    env:
+      TZ: Asia/Taipei
+      SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
+      SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
+      SHIOAJI_SIMULATION: "true"
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Install dependencies
-      run: |
-        pip install pandas requests
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          pip install playwright
+          python -m playwright install --with-deps chromium
 
-    - name: Run fill_stocks_close_price.py
-      run: |
-        python fill_stocks_close_price.py
+      - name: Determine backfill range
+        shell: bash
+        run: |
+          START_DATE="${{ github.event.inputs.start_date }}"
+          RAW_END="${{ github.event.inputs.end_date }}"
+          if [ -z "$RAW_END" ]; then
+            END_DATE="$(date +'%Y-%m-%d')"
+          elif [[ "$RAW_END" =~ ^[0-9]{8}$ ]]; then
+            END_DATE="${RAW_END:0:4}-${RAW_END:4:2}-${RAW_END:6:2}"
+          else
+            END_DATE="$(date -d "$RAW_END" +'%Y-%m-%d')"
+          fi
+          echo "START_DATE=$START_DATE" >> "$GITHUB_ENV"
+          echo "END_DATE=$END_DATE" >> "$GITHUB_ENV"
+          echo "[workflow] START_DATE=${START_DATE:-auto} END_DATE=$END_DATE"
 
-    - name: Commit and push if changed
-      run: |
-        git config --local user.name "github-actions[bot]"
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git add data/*_with_price.csv
-        git commit -m "auto: update daily stock close prices" || echo "No changes to commit"
-        git push
-      env:
-        # 自動權杖，GitHub Actions 預設有
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Backfill holdings history
+        run: |
+          if [ -n "${START_DATE}" ]; then
+            python scripts/backfill_capital_history.py --start-date "$START_DATE" --end-date "$END_DATE"
+          else
+            python scripts/backfill_capital_history.py --end-date "$END_DATE"
+          fi
+
+      - name: Fill close prices via Shioaji
+        run: |
+          python scripts/fill_prices_with_shioaji.py \
+            --through-date "$END_DATE" \
+            --strict \
+            --write-with-price
+
+      - name: Rebuild change tables
+        run: |
+          python scripts/build_change_tables.py \
+            --through-date "$END_DATE" \
+            --require-price
+
+      - name: Rebuild cost basis
+        run: python scripts/rebuild_cost_basis.py --reset
+
+      - name: Commit backfill outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add archive/ data/ data_snapshots/ prices/ reports/ manifest/
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "Backfill holdings & prices through ${END_DATE}"
+            git pull --rebase origin master
+            git push
+          fi
+
+      - name: Notify failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+        run: |
+          BODY=$(cat <<EOF
+          workflow: Backfill Holdings And Prices
+          job: backfill
+          start_date: ${START_DATE:-auto}
+          end_date: ${END_DATE:-N/A}
+          ref: ${{ github.ref_name }}
+          run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          python scripts/notify_failure.py \
+            --subject "[00992A] Backfill holdings or prices failed" \
+            --body "$BODY"
