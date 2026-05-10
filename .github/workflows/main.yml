@@ -2,8 +2,8 @@ name: Finalize Prices And Cost Basis
 
 on:
   schedule:
-    - cron: "35 6 * * 1-5"
-  workflow_dispatch:
+       - cron: "30 10 * * 1-5"
+       workflow_dispatch:
     inputs:
       through_date:
         description: "只補到此日期，格式 YYYY-MM-DD 或 YYYYMMDD"
