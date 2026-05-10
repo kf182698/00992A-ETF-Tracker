@@ -99,7 +99,7 @@ def update_cost_basis(cost_df: pd.DataFrame, change_df: pd.DataFrame, report_dat
     # Ensure numeric fields are proper types
     change_df["今日股數"] = pd.to_numeric(change_df["今日股數"], errors="coerce").fillna(0).astype(int)
     change_df["買賣超股數"] = pd.to_numeric(change_df["買賣超股數"], errors="coerce").fillna(0).astype(int)
-   change_df["今日收盤價"] = pd.to_numeric(change_df["今日收盤價"], errors="coerce")  # keep NaN; guard per row below
+    change_df["今日收盤價"] = pd.to_numeric(change_df["今日收盤價"], errors="coerce")  # keep NaN; guard per row below
 
     # Ensure cost_df numeric columns
     if not cost_df.empty:
