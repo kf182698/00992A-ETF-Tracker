@@ -99,7 +99,7 @@ def update_cost_basis(cost_df: pd.DataFrame, change_df: pd.DataFrame, report_dat
     # Ensure numeric fields are proper types
     change_df["今日股數"] = pd.to_numeric(change_df["今日股數"], errors="coerce").fillna(0).astype(int)
     change_df["買賣超股數"] = pd.to_numeric(change_df["買賣超股數"], errors="coerce").fillna(0).astype(int)
-    change_df["今日收盤價"] = pd.to_numeric(change_df["今日收盤價"], errors="coerce").fillna(0.0)
+   change_df["今日收盤價"] = pd.to_numeric(change_df["今日收盤價"], errors="coerce")  # keep NaN; guard per row below
 
     # Ensure cost_df numeric columns
     if not cost_df.empty:
@@ -120,9 +120,13 @@ def update_cost_basis(cost_df: pd.DataFrame, change_df: pd.DataFrame, report_dat
         else:
             first_buy = bool(val)
         new_shares = int(row["買賣超股數"])
-        price = float(row["今日收盤價"])
         total_today_shares = int(row["今日股數"])
-        # Determine if the stock is already in cost_df
+        price_raw = row["今日收盤價"]
+        price_missing = pd.isna(price_raw) or float(price_raw) <= 0
+        if price_missing and (new_shares != 0 or first_buy):
+            print(f"[warn] {code} ({report_date}) 今日收盤價缺失，跳過...")
+            continue
+        price = float(price_raw) if not price_missing else 0.0
         if code not in cost_df.index:
             # First encounter: Only process if first_buy flag or any shares held
             if first_buy or total_today_shares > 0:
@@ -158,7 +162,9 @@ def update_cost_basis(cost_df: pd.DataFrame, change_df: pd.DataFrame, report_dat
             
             deducted_cost = actual_sell_shares * avg_unit_cost
             updated_value = max(0.0, existing_value - deducted_cost)
-            
+            if updated_shares == 0:
+                updated_value = 0.0  # eliminate floating-point residuals when fully cleared
+
             cost_df.loc[code, "股數"] = updated_shares
             cost_df.loc[code, "成本市值"] = updated_value
             
