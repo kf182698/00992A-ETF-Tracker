@@ -47,7 +47,13 @@ def _load_df(path: Path) -> pd.DataFrame:
     return df.sort_values("股票代號").reset_index(drop=True)
 
 def _find_prev_snapshot(report_date: str) -> Path | None:
-    snaps = sorted(glob.glob("data_snapshots/*.csv"))
+    # Search both data_snapshots/ and data/ (excluding *_with_price files)
+    # Sort by stem (date string) so the most recent date wins regardless of directory
+    all_paths = glob.glob("data_snapshots/*.csv") + glob.glob("data/*.csv")
+    snaps = sorted(
+        (p for p in all_paths if not Path(p).stem.endswith("_with_price")),
+        key=lambda p: Path(p).stem,
+    )
     prev_path = None
     for p in reversed(snaps):
         name = Path(p).stem  # YYYY-MM-DD
