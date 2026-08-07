@@ -243,7 +243,9 @@ def main() -> None:
 
     # 停牌等原因查無成交價時，延用該股票最近一次已知的收盤價，避免單一個股單一天的
     # 資料缺口（例如證交所核准暫停交易）擋住後面所有日期的資料寫入與 commit。
-    last_known_price = load_last_known_prices(prices_dir, start_date)
+    # 注意：要以「這次實際要處理的最早日期」為基準往回找，不能用 start_date
+    # （start_date 是 data/ 目錄裡最早的日期，通常遠早於這次要補的區間）。
+    last_known_price = load_last_known_prices(prices_dir, min(holdings_by_date))
 
     missing_records: list[str] = []
     for date_str, holdings_df in sorted(holdings_by_date.items()):
