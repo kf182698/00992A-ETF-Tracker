@@ -111,6 +111,23 @@ def price_file_complete(price_path: Path, holdings_df: pd.DataFrame) -> bool:
     return merged["收盤價"].notna().all()
 
 
+def load_last_known_prices(prices_dir: Path, before_date: str) -> dict[str, float]:
+    """讀取 before_date 之前、最近一天已完成的 prices/*.csv，作為停牌股票延用前一日收盤價的基準。"""
+    prior_dates = sorted(path.stem for path in prices_dir.glob("*.csv") if path.stem < before_date)
+    if not prior_dates:
+        return {}
+
+    df = pd.read_csv(prices_dir / f"{prior_dates[-1]}.csv", encoding="utf-8-sig", dtype=str)
+    df.columns = [str(column).replace("﻿", "").strip() for column in df.columns]
+    if "股票代號" not in df.columns or "收盤價" not in df.columns:
+        return {}
+
+    df["股票代號"] = df["股票代號"].astype(str).str.extract(r"([1-9]\d{3})", expand=False)
+    df["收盤價"] = pd.to_numeric(df["收盤價"], errors="coerce")
+    df = df.dropna(subset=["股票代號", "收盤價"])
+    return dict(zip(df["股票代號"], df["收盤價"]))
+
+
 def resolve_contract(api: sj.Shioaji, code: str):
     try:
         return api.Contracts.Stocks[code]
@@ -224,18 +241,31 @@ def main() -> None:
     except Exception:
         pass
 
+    # 停牌等原因查無成交價時，延用該股票最近一次已知的收盤價，避免單一個股單一天的
+    # 資料缺口（例如證交所核准暫停交易）擋住後面所有日期的資料寫入與 commit。
+    last_known_price = load_last_known_prices(prices_dir, start_date)
+
     missing_records: list[str] = []
     for date_str, holdings_df in sorted(holdings_by_date.items()):
         priced_df = holdings_df.copy()
+        fetched_prices = {code: prices_by_code.get(code, {}).get(date_str) for code in priced_df["股票代號"]}
+        carried_codes = [code for code, price in fetched_prices.items() if price is None and code in last_known_price]
+
         priced_df["收盤價"] = priced_df["股票代號"].map(
-            lambda code: prices_by_code.get(code, {}).get(date_str)
+            lambda code: fetched_prices[code] if fetched_prices[code] is not None else last_known_price.get(code)
         )
+        for code, price in fetched_prices.items():
+            if price is not None:
+                last_known_price[code] = price
 
         price_df = priced_df[["股票代號", "收盤價"]].copy()
         price_df.to_csv(prices_dir / f"{date_str}.csv", index=False, encoding="utf-8-sig")
 
         if args.write_with_price:
             priced_df.to_csv(data_dir / f"{date_str}_with_price.csv", index=False, encoding="utf-8-sig")
+
+        if carried_codes:
+            print(f"[prices] carried forward {date_str}: {', '.join(carried_codes)}（查無成交，延用前一日收盤價）")
 
         missing_codes = priced_df.loc[priced_df["收盤價"].isna(), "股票代號"].tolist()
         if missing_codes:
