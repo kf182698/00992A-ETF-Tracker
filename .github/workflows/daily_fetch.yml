@@ -63,11 +63,14 @@ jobs:
       - name: Fetch latest holdings snapshot
         run: python fetch_snapshot.py
 
+      - name: Build website data feed
+        run: python scripts/build_web_data.py
+
       - name: Commit holdings update
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add archive/ data/ manifest/
+          git add archive/ data/ manifest/ web/
           if git diff --cached --quiet; then
             echo "nothing to commit"
           else
